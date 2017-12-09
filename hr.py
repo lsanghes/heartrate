@@ -2,7 +2,8 @@ from ant.easy.node import Node
 from ant.easy.channel import Channel
 from twilio.rest import Client
 from collections import deque
-import sys, time, datetime
+from datetime import datetime
+import time, logging
 
 class Alert:
     def __init__(self, account_sid, auth_token, twilio_number, twilio_call_url, alert_numbers):
@@ -10,15 +11,16 @@ class Alert:
         self.twilio_number = twilio_number
         self.twilio_call_url = twilio_call_url
         self.alert_numbers = alert_numbers
+        self.logger = logging.getLogger("Alert")
 
-    def send_sms(self, content):
+    def send_sms(self, body):
         msg = ""
         for number in self.alert_numbers:
             try:
-                message = self.client.messages.create(to=number, from_=self.twilio_number, body=content)
+                message = self.client.messages.create(to=number, from_=self.twilio_number, body=body)
                 msg += "SMS:{} SENT\n".format(number)
             except Exception as ex:
-                print(ex)
+                self.logger.error('{}: {}'.format(type(ex), ex))
                 msg += "SMS:{} FAILED\n".format(number)
         return msg
 
@@ -29,22 +31,15 @@ class Alert:
                 call = client.api.account.calls.create(to=number, from_=self.twilio_number, url=self.twilio_call_url)
                 msg += "Call:{} SENT\n".format(number)
             except Exception as ex:
-                print(ex)
+                self.logger.error('{}: {}'.format(type(ex), ex))
                 msg += "Call:{} FAILED\n".format(number)
         return msg
 
 
 class HRM:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, type_, value, traceback):
-        if self.antnode:
-            self.antnode.stop()
-
     def __init__(self, netkey, alert, sampling_interval, moving_avg_size, max_hr_threshold, enable_sms_alert, enable_call_alert):
         self.alert = alert
-        self.prev_timestamp = time.time()
+        self.prev_ts = time.time()
         self.prev_avg_hr = 0
         self.netkey = netkey
         self.antnode = None
@@ -57,13 +52,16 @@ class HRM:
         self.max_hr_threshold = max_hr_threshold
         self.enable_call_alert = enable_call_alert
         self.enable_sms_alert = enable_sms_alert
+        self.logger = logging.getLogger("HRM")
+
+    def stop(self):
+        if self.antnode:
+            self.antnode.stop()
 
     def start(self):
-        print("starting...")
         self.setup_node_channel()
         self.channel.open()
         self.antnode.start()
-        print("start listening for hr events")
 
     def setup_node_channel(self):
         self.antnode = Node()
@@ -77,34 +75,33 @@ class HRM:
         self.channel.set_id(0, 120, 0)
 
     def process(self, data):
-        current_timestamp = time.time()
-        if current_timestamp - self.prev_timestamp < self.sampling_interval:
+        curr_ts = time.time()
+        if curr_ts - self.prev_ts < self.sampling_interval:
             return
 
-        ts = datetime.datetime.fromtimestamp(current_timestamp).strftime("%Y%m%d-%H:%M:%S")
         hr = data[7]
         self.past_heartrates.append(hr)
         curr_avg_hr = sum(self.past_heartrates) // len(self.past_heartrates)
 
-        # log hr
-        message = "{},{},{}".format(ts, hr, curr_avg_hr)
-        with open("hr_log.csv", "a") as f:
-            print(message)
-            f.write(message + "\n")
+        self.logger.info("hr={}, avg_hr={}".format(hr, curr_avg_hr))
+
+        # log hr for analysis
+        hr_log = "{},{},{}".format(datetime.fromtimestamp(curr_ts).strftime("%Y%m%d_%H:%M:%S"), hr, curr_avg_hr)
+        with open("hr_log_{}.csv".format(datetime.fromtimestamp(time.time()).strftime("%Y%m%d")), "a") as f:
+            f.write(hr_log + "\n")
 
         # detect abnormal hr
         if self.prev_avg_hr < self.max_hr_threshold and curr_avg_hr > self.max_hr_threshold:
+            ts = datetime.fromtimestamp(curr_ts).strftime("%I:%M%p")
+            msg =  "Unusual HR {} BPM was detected at {}.".format(hr, ts)
+            self.logger.info(msg)
             if self.enable_sms_alert:
-                ts = datetime.datetime.fromtimestamp(current_timestamp).strftime("%I:%M%p")
-                smsbody =  "Unusual HR of {} BPM was detected at {}.".format(hr, ts)
-                print(smsbody)
-                print(self.alert.send_sms(smsbody))
-
+                self.logger.info(self.alert.send_sms(msg))
             if self.enable_call_alert:
-                print(self.alert.make_call())
+                self.logger.info(self.alert.make_call())
 
         # update prev_* values
-        self.prev_timestamp = current_timestamp
+        self.prev_ts = curr_ts
         self.prev_avg_hr = curr_avg_hr
 
 
@@ -118,34 +115,18 @@ sampling_interval = 5
 moving_avg_size = 6
 enable_sms_alert = 1
 enable_call_alert = 0
-max_hr_threshold = 105
-alert = Alert(account_sid, auth_token, twilio_number, twilio_call_url, alert_numbers)
+max_hr_threshold = 100
 
-with HRM(netkey, alert, sampling_interval, moving_avg_size, max_hr_threshold, enable_sms_alert, enable_call_alert) as hrm:
-    hrm.start()
+def main():
+    logging.basicConfig(format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s', level = logging.INFO)
+    alert = Alert(account_sid, auth_token, twilio_number, twilio_call_url, alert_numbers)
+    hrm = HRM(netkey, alert, sampling_interval, moving_avg_size, max_hr_threshold, enable_sms_alert, enable_call_alert)
     try:
+        print("starting HRM...")
         hrm.start()
-    except:
-        print("...exception...")
+    finally:
+        print("stopping HRM...")
+        hrm.stop()
 
-
-# def api_call_monitor():
-#     global last_api_stamp
-#     curr_timestamp = time.time()
-#     ts = datetime.datetime.fromtimestamp(curr_timestamp).strftime("%Y%m%d_%H%M%S")
-#     since_last_heartbeat = int(curr_timestamp - last_api_stamp)
-#     if since_last_heartbeat > min_freq:
-#         if self.enable_sms_alert:
-#             smsbody = "{} : WARNIG last heart beat was received {} sec ago!".format(ts, since_last_heartbeat)
-#             print(smsbody)
-#             print(self.alert.send_sms(smsbody))
-#     else:
-#         print("{} : Heart beat status is OK".format(ts, since_last_heartbeat))
-
-# scheduler = BackgroundScheduler()
-# scheduler.start()
-# scheduler.add_job(func=api_call_monitor, trigger=IntervalTrigger(seconds=monitor_task_interval_sec))
-
-# # Shut down the scheduler when exiting the app
-# atexit.register(lambda: scheduler.shutdown())
-
+if __name__ == "__main__":
+    main()
