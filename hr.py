@@ -39,7 +39,7 @@ class Alert:
 
 
 class HRM:
-    def __init__(self, netkey, alert, sampling_freq, moving_avg_size, resting_hr, warning_hr, critical_hr, alert_freq):
+    def __init__(self, netkey, alert, sampling_freq, moving_avg_size, resting_hr, warning_hr, critical_hr):
         self.logger = logging.getLogger("HRM")
         # ant+ config
         self.netkey = netkey
@@ -50,7 +50,6 @@ class HRM:
         self.warning_hr = warning_hr
         self.critical_hr = critical_hr
         self.alert_ts = 0
-        self.alert_freq = alert_freq
         # processing config
         self.prev_ts = time.time()
         self.past_heartrates = deque([resting_hr] * moving_avg_size, moving_avg_size)
@@ -94,7 +93,7 @@ class HRM:
         with open("hr_log.csv", "a") as f:
             f.write(hr_log + "\n")
 
-        # critical heart rate, call every minute
+        # critical heart rate, call & sms every 1 min
         if curr_avg_hr > self.critical_hr:
             msg =  "Critical: HR of {} BPM was detected at {}.".format(hr, curr_ts_fmt)
             self.logger.info(msg)
@@ -104,6 +103,8 @@ class HRM:
                 self.alert_ts = curr_ts
             else:
                 self.logger.info("alert was sent less than 60 seconds ago, no alert will be sent.")
+
+        # warning heart rate, sms every minute 5 min
         elif curr_avg_hr > self.warning_hr:
             msg =  "Warning: HR of {} BPM was detected at {}.".format(hr, curr_ts_fmt)
             self.logger.info(msg)
@@ -125,14 +126,13 @@ alert_numbers = "+13123162187"
 sampling_freq = 5
 moving_avg_size = 6
 resting_hr = 80
-warning_hr = 80
+warning_hr = 105
 critical_hr = 120
-alert_freq = 300
 
 def main():
     logging.basicConfig(format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s', level = logging.INFO)
     alert = Alert(account_sid, auth_token, twilio_number, twilio_call_url, alert_numbers.split(";"))
-    hrm = HRM(netkey, alert, sampling_freq, moving_avg_size, resting_hr, warning_hr, critical_hr, alert_freq)
+    hrm = HRM(netkey, alert, sampling_freq, moving_avg_size, resting_hr, warning_hr, critical_hr)
     try:
         print("Starting HRM...")
         hrm.start()
