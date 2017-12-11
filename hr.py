@@ -13,46 +13,49 @@ class Alert:
         self.alert_numbers = alert_numbers
         self.logger = logging.getLogger("Alert")
 
-    def send_sms(self, body):
-        msg = ""
+    def send_sms(self, msg):
+        ret = ""
         for number in self.alert_numbers:
             try:
-                message = self.client.messages.create(to=number, from_=self.twilio_number, body=body)
-                msg += "SMS:{} SENT\n".format(number)
+                response = self.client.messages.create(to=number, from_=self.twilio_number, body=msg)
+                self.logger.debug(response)
+                ret += "SMS:{} SENT\n".format(number)
             except Exception as ex:
                 self.logger.error('{}: {}'.format(type(ex), ex))
-                msg += "SMS:{} FAILED\n".format(number)
-        return msg
+                ret += "SMS:{} FAILED\n".format(number)
+        return ret
 
-    def make_call(self):
-        msg = ""
+    def make_call(self, msg):
+        ret = ""
         for number in self.alert_numbers:
             try:
-                call = client.api.account.calls.create(to=number, from_=self.twilio_number, url=self.twilio_call_url)
-                msg += "Call:{} SENT\n".format(number)
+                response = self.client.api.account.calls.create(to=number, from_=self.twilio_number, url=self.twilio_call_url)
+                self.logger.debug(response)
+                ret += "Call:{} SENT\n".format(number)
             except Exception as ex:
                 self.logger.error('{}: {}'.format(type(ex), ex))
-                msg += "Call:{} FAILED\n".format(number)
-        return msg
+                ret += "Call:{} FAILED\n".format(number)
+        return ret
 
 
 class HRM:
-    def __init__(self, netkey, alert, sampling_interval, moving_avg_size, max_hr_threshold, enable_sms_alert, enable_call_alert):
-        self.alert = alert
-        self.prev_ts = time.time()
-        self.prev_avg_hr = 0
+    def __init__(self, netkey, alert, sampling_freq, moving_avg_size, resting_hr, warning_hr, critical_hr, alert_freq):
+        self.logger = logging.getLogger("HRM")
+        # ant+ config
         self.netkey = netkey
         self.antnode = None
         self.channel = None
-        self.sms_enabled = True
-        self.call_enabled = False
-        self.past_heartrates = deque([], moving_avg_size)
-        self.curr_heartrate = None
-        self.sampling_interval = sampling_interval
-        self.max_hr_threshold = max_hr_threshold
-        self.enable_call_alert = enable_call_alert
-        self.enable_sms_alert = enable_sms_alert
-        self.logger = logging.getLogger("HRM")
+        # alert config
+        self.alert = alert
+        self.warning_hr = warning_hr
+        self.critical_hr = critical_hr
+        self.alert_ts = 0
+        self.alert_freq = alert_freq
+        # processing config
+        self.prev_ts = time.time()
+        self.past_heartrates = deque([resting_hr] * moving_avg_size, moving_avg_size)
+        self.sampling_freq = sampling_freq
+
 
     def stop(self):
         if self.antnode:
@@ -76,56 +79,65 @@ class HRM:
 
     def process(self, data):
         curr_ts = time.time()
-        if curr_ts - self.prev_ts < self.sampling_interval:
+        curr_ts_fmt = datetime.fromtimestamp(curr_ts).strftime("%m/%d/%Y %H:%M:%S")
+        if curr_ts - self.prev_ts < self.sampling_freq:
             return
 
         hr = data[7]
         self.past_heartrates.append(hr)
         curr_avg_hr = sum(self.past_heartrates) // len(self.past_heartrates)
 
-        self.logger.info("hr={}, avg_hr={}".format(hr, curr_avg_hr))
+        self.logger.info("hr={}, cur_avg_hr={}, warning_hr={}, alert_ts={}".format(hr, curr_avg_hr, self.warning_hr, self.alert_ts))
 
         # log hr for analysis
-        hr_log = "{},{},{}".format(datetime.fromtimestamp(curr_ts).strftime("%Y%m%d_%H:%M:%S"), hr, curr_avg_hr)
-        with open("hr_log_{}.csv".format(datetime.fromtimestamp(time.time()).strftime("%Y%m%d")), "a") as f:
+        hr_log = "{},{},{}".format(curr_ts_fmt, hr, curr_avg_hr)
+        with open("hr_log.csv", "a") as f:
             f.write(hr_log + "\n")
 
-        # detect abnormal hr
-        if self.prev_avg_hr < self.max_hr_threshold and curr_avg_hr > self.max_hr_threshold:
-            ts = datetime.fromtimestamp(curr_ts).strftime("%I:%M%p")
-            msg =  "Unusual HR {} BPM was detected at {}.".format(hr, ts)
+        # critical heart rate, call every minute
+        if curr_avg_hr > self.critical_hr:
+            msg =  "Critical: HR of {} BPM was detected at {}.".format(hr, curr_ts_fmt)
             self.logger.info(msg)
-            if self.enable_sms_alert:
+            if time.time() - self.alert_ts > 60:
                 self.logger.info(self.alert.send_sms(msg))
-            if self.enable_call_alert:
-                self.logger.info(self.alert.make_call())
-
-        # update prev_* values
+                self.logger.info(self.alert.make_call(msg))
+                self.alert_ts = curr_ts
+            else:
+                self.logger.info("alert was sent less than 60 seconds ago, no alert will be sent.")
+        elif curr_avg_hr > self.warning_hr:
+            msg =  "Warning: HR of {} BPM was detected at {}.".format(hr, curr_ts_fmt)
+            self.logger.info(msg)
+            if time.time() - self.alert_ts > 60 * 5:
+                self.logger.info(self.alert.send_sms(msg))
+                self.alert_ts = curr_ts
+            else:
+                self.logger.info("alert was sent less than 5 min ago, no alert will be sent.")
         self.prev_ts = curr_ts
-        self.prev_avg_hr = curr_avg_hr
-
 
 netkey = [0xb9, 0xa5, 0x21, 0xfb, 0xbd, 0x72, 0xc3, 0x45]
-twilio_call_url = "http://twimlets.com/holdmusic?Bucket=com.twilio.music.ambient"
+twilio_call_url = "https://handler.twilio.com/twiml/EH45d33797a5de5078025c83c420f1df32"
 account_sid = "AC36f913e555e5e0760cf5edfe1fd528f2"
 auth_token  = "5c9aa78c852e24fd239ce1bfe3f5b918"
+AWSAccessKeyId = "AKIAJNV3JI6AHNVQ23GQ"
+AWSSecretKey = "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"
 twilio_number = "+13124710394"
-alert_numbers = ["+13123162187"]
-sampling_interval = 5
+alert_numbers = "+13123162187"
+sampling_freq = 5
 moving_avg_size = 6
-enable_sms_alert = 1
-enable_call_alert = 0
-max_hr_threshold = 100
+resting_hr = 80
+warning_hr = 80
+critical_hr = 120
+alert_freq = 300
 
 def main():
     logging.basicConfig(format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s', level = logging.INFO)
-    alert = Alert(account_sid, auth_token, twilio_number, twilio_call_url, alert_numbers)
-    hrm = HRM(netkey, alert, sampling_interval, moving_avg_size, max_hr_threshold, enable_sms_alert, enable_call_alert)
+    alert = Alert(account_sid, auth_token, twilio_number, twilio_call_url, alert_numbers.split(";"))
+    hrm = HRM(netkey, alert, sampling_freq, moving_avg_size, resting_hr, warning_hr, critical_hr, alert_freq)
     try:
-        print("starting HRM...")
+        print("Starting HRM...")
         hrm.start()
     finally:
-        print("stopping HRM...")
+        print("Stopping HRM...")
         hrm.stop()
 
 if __name__ == "__main__":
