@@ -86,7 +86,7 @@ class HRM:
         self.past_heartrates.append(hr)
         curr_avg_hr = sum(self.past_heartrates) // len(self.past_heartrates)
 
-        self.logger.info("hr={}, cur_avg_hr={}, warning_hr={}, alert_ts={}".format(hr, curr_avg_hr, self.warning_hr, self.alert_ts))
+        self.logger.info("hr={}, cur_avg_hr={}, warning_hr={}, critical_hr={}, alert_ts={}".format(hr, curr_avg_hr, self.warning_hr, self.critical_hr, self.alert_ts))
 
         # log hr for analysis
         hr_log = "{},{},{}".format(curr_ts_fmt, hr, curr_avg_hr)
