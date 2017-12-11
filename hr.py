@@ -117,12 +117,12 @@ class HRM:
 
 netkey = [0xb9, 0xa5, 0x21, 0xfb, 0xbd, 0x72, 0xc3, 0x45]
 twilio_call_url = "https://handler.twilio.com/twiml/EH45d33797a5de5078025c83c420f1df32"
-account_sid = "AC36f913e555e5e0760cf5edfe1fd528f2"
-auth_token  = "5c9aa78c852e24fd239ce1bfe3f5b918"
-AWSAccessKeyId = "AKIAJNV3JI6AHNVQ23GQ"
-AWSSecretKey = "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"
-twilio_number = "+13124710394"
-alert_numbers = "+13123162187"
+account_sid = 
+auth_token  = 
+AWSAccessKeyId = 
+AWSSecretKey = 
+twilio_number = 
+alert_numbers = 
 sampling_freq = 5
 moving_avg_size = 12
 resting_hr = 80
