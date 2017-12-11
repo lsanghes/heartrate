@@ -124,10 +124,10 @@ AWSSecretKey = "8g92Mq3rrlWi4vZFXc9d/Yxayw2dOd6NMw5nhAp4"
 twilio_number = "+13124710394"
 alert_numbers = "+13123162187"
 sampling_freq = 5
-moving_avg_size = 6
+moving_avg_size = 12
 resting_hr = 80
-warning_hr = 105
-critical_hr = 120
+warning_hr = 100
+critical_hr = 115
 
 def main():
     logging.basicConfig(format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s', level = logging.INFO)
